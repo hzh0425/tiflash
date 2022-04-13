@@ -25,10 +25,12 @@ namespace DM
 struct WriteBatches : private boost::noncopyable
 {
     NamespaceId ns_id;
+    // 对应 storagePool 的三个 writeBatch
     WriteBatch log;
     WriteBatch data;
     WriteBatch meta;
 
+    // 代表哪些 log 和 data 的 page 以及写入到 storagePool
     PageIds written_log;
     PageIds written_data;
 

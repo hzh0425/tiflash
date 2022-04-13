@@ -29,6 +29,7 @@ MinorCompaction::MinorCompaction(size_t compaction_src_level_, size_t current_co
     , current_compaction_version{current_compaction_version_}
 {}
 
+// Prepare 的作用就是把一个 task 里面多个 tinyFile 合并成一个大的 tinyFile
 void MinorCompaction::prepare(DMContext & context, WriteBatches & wbs, const PageReader & reader)
 {
     for (auto & task : tasks)
@@ -36,6 +37,7 @@ void MinorCompaction::prepare(DMContext & context, WriteBatches & wbs, const Pag
         if (task.is_trivial_move)
             continue;
 
+        // 已经保证了一个 task 里面的所有 file 的 schema 是一样的, 也即存的列是一样的.
         auto & schema = *(task.to_compact[0]->tryToTinyFile()->getSchema());
         auto compact_columns = schema.cloneEmptyColumns();
         for (auto & file : task.to_compact)
@@ -45,15 +47,18 @@ void MinorCompaction::prepare(DMContext & context, WriteBatches & wbs, const Pag
                 throw Exception("The compact candidate is not a ColumnTinyFile", ErrorCodes::LOGICAL_ERROR);
 
             // We ensure schema of all column files are the same
+            // 从 file 里面读取 block
             Block block = t_file->readBlockForMinorCompaction(reader);
             size_t block_rows = block.rows();
+            // 取出 block 的每一个列, 放入到 compact_columns 中.
             for (size_t i = 0; i < schema.columns(); ++i)
             {
                 compact_columns[i]->insertRangeFrom(*block.getByPosition(i).column, 0, block_rows);
             }
-
+            // 删除这个 tinyFile 对应的 pageId
             wbs.removed_log.delPage(t_file->getDataPageId());
         }
+        // 根据 compact_columns 构建一个新的 TinyFile, 同时写入到 pageStorage 中.
         Block compact_block = schema.cloneWithColumns(std::move(compact_columns));
         auto compact_rows = compact_block.rows();
         auto compact_column_file = ColumnFileTiny::writeColumnFile(context, compact_block, 0, compact_rows, wbs, task.to_compact.front()->tryToTinyFile()->getSchema());

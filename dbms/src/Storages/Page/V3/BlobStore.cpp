@@ -120,6 +120,8 @@ PageEntriesEdit BlobStore::write(DB::WriteBatch & wb, const WriteLimiterPtr & wr
         free(buffer, all_page_data_size);
     });
     char * buffer_pos = buffer;
+
+    // 从 SpaceMap 申请空间, 获取 Blobfile Id 和 offset.
     auto [blob_id, offset_in_file] = getPosFromStats(all_page_data_size);
 
     size_t offset_in_allocated = 0;
@@ -199,6 +201,7 @@ PageEntriesEdit BlobStore::write(DB::WriteBatch & wb, const WriteLimiterPtr & wr
     try
     {
         auto blob_file = getBlobFile(blob_id);
+        // 将数据写入 file 中.
         blob_file->write(buffer, offset_in_file, all_page_data_size, write_limiter);
     }
     catch (DB::Exception & e)

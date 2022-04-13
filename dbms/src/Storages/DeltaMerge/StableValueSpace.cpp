@@ -80,6 +80,7 @@ void StableValueSpace::saveMeta(WriteBatch & meta_wb)
     writeIntBinary(valid_bytes, buf);
     writeIntBinary(static_cast<UInt64>(files.size()), buf);
     for (auto & f : files)
+        // referenceId = fileId
         writeIntBinary(f->refId(), buf);
 
     auto data_size = buf.count(); // Must be called before tryGetReadBuffer.

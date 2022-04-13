@@ -38,6 +38,8 @@ ColumnFileFlushTask::ColumnFileFlushTask(DMContext & context_, const MemTableSet
     , flush_version{flush_version_}
 {}
 
+
+// Prepare 就是将 memoryFile 里的数据写入到 wbs.log 中, 也即持久化到磁盘 pageStorage.
 DeltaIndex::Updates ColumnFileFlushTask::prepare(WriteBatches & wbs)
 {
     DeltaIndex::Updates delta_index_updates;
@@ -59,6 +61,7 @@ DeltaIndex::Updates ColumnFileFlushTask::prepare(WriteBatches & wbs)
     return delta_index_updates;
 }
 
+// Commit 就是将这些新的 file, append 到 persistedFileSet 中, 并持久化新增文件的元数据到 wbs.meta 中.
 bool ColumnFileFlushTask::commit(ColumnFilePersistedSetPtr & persisted_file_set, WriteBatches & wbs)
 {
     if (!persisted_file_set->checkAndIncreaseFlushVersion(flush_version))
@@ -96,6 +99,7 @@ bool ColumnFileFlushTask::commit(ColumnFilePersistedSetPtr & persisted_file_set,
     }
 
     // serialize metadata and update persisted_file_set
+    // 这里是重点.
     if (!persisted_file_set->appendPersistedColumnFilesToLevel0(new_column_files, wbs))
         return false;
 

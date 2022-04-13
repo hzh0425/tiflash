@@ -299,6 +299,7 @@ bool ColumnFilePersistedSet::checkAndIncreaseFlushVersion(size_t task_flush_vers
 
 bool ColumnFilePersistedSet::appendPersistedColumnFilesToLevel0(const ColumnFilePersisteds & column_files, WriteBatches & wbs)
 {
+    // 先把旧的 leves copy 一份
     ColumnFilePersistedLevels new_persisted_files_levels;
     for (auto & level : persisted_files_levels)
     {
@@ -310,9 +311,11 @@ bool ColumnFilePersistedSet::appendPersistedColumnFilesToLevel0(const ColumnFile
         new_persisted_files_levels.emplace_back();
     auto & new_level_0 = new_persisted_files_levels[0];
 
+    // 把文件 append 到 level[0], 也即 delta layer.
     for (const auto & f : column_files)
         new_level_0.push_back(f);
 
+    // 序列化元数据到 wbs.meta (->pageSotrage.)
     /// Save the new metadata of column files to disk.
     serializeColumnFilePersistedLevels(wbs, metadata_id, new_persisted_files_levels);
     wbs.writeMeta();
@@ -331,6 +334,9 @@ MinorCompactionPtr ColumnFilePersistedSet::pickUpMinorCompaction(DMContext & con
     // For ColumnFileTiny, we will try to combine small `ColumnFileTiny`s to a bigger one.
     // For ColumnFileDeleteRange and ColumnFileBig, we will simply move them to the next level.
     // And only if there exists some small `ColumnFileTiny`s which can be combined together, we will actually do the compaction.
+    
+    // 1.将多个 tinyFile 合并成一个大的 tinyFile
+    // 2.jian
     size_t check_level_num = 0;
     while (check_level_num < persisted_files_levels.size())
     {
@@ -346,6 +352,7 @@ MinorCompactionPtr ColumnFilePersistedSet::pickUpMinorCompaction(DMContext & con
             MinorCompaction::Task cur_task;
             for (auto & file : level)
             {
+                // 将 curTask 放入到 compactoinTasks 中.
                 auto pack_up_cur_task = [&]() {
                     bool is_trivial_move = compaction->packUpTask(std::move(cur_task));
                     is_all_trivial_move = is_all_trivial_move && is_trivial_move;
@@ -354,7 +361,9 @@ MinorCompactionPtr ColumnFilePersistedSet::pickUpMinorCompaction(DMContext & con
 
                 if (auto * t_file = file->tryToTinyFile(); t_file)
                 {
+                    // 如果当前这个 compactTask 已经满了
                     bool cur_task_full = cur_task.total_rows >= context.delta_small_column_file_rows;
+                    // 如果不是一个 small File
                     bool small_column_file = t_file->getRows() < context.delta_small_column_file_rows;
                     bool schema_ok = cur_task.to_compact.empty();
 
@@ -363,6 +372,7 @@ MinorCompactionPtr ColumnFilePersistedSet::pickUpMinorCompaction(DMContext & con
                         if (auto * last_t_file = cur_task.to_compact.back()->tryToTinyFile(); last_t_file)
                             schema_ok = t_file->getSchema() == last_t_file->getSchema();
                     }
+
 
                     if (cur_task_full || !small_column_file || !schema_ok)
                         pack_up_cur_task();

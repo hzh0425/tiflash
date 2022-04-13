@@ -61,6 +61,7 @@ ColumnFileInMemory::getReader(const DMContext & /*context*/, const StorageSnapsh
     return std::make_shared<ColumnFileInMemoryReader>(*this, col_defs);
 }
 
+// 这里 offset 就代表在 data 的所有 columns 中, 每个 column 所的是连续好几行的同一个列的数据, offset 就代表从哪一行开始, limit 代表总共村多少行的列数据
 bool ColumnFileInMemory::append(DMContext & context, const Block & data, size_t offset, size_t limit, size_t data_bytes)
 {
     if (disable_append)
@@ -74,11 +75,14 @@ bool ColumnFileInMemory::append(DMContext & context, const Block & data, size_t 
     if (cache->block.rows() >= context.delta_cache_limit_rows || cache->block.bytes() >= context.delta_cache_limit_bytes)
         return false;
 
+    // 遍历每一个 column
     for (size_t i = 0; i < cache->block.columns(); ++i)
     {
         const auto & col = data.getByPosition(i).column;
+        // 取出在 cache 中的 column
         const auto & cache_col = *cache->block.getByPosition(i).column;
         auto * mutable_cache_col = const_cast<IColumn *>(&cache_col);
+        // 插入 mutable_cache_col,   从 col 的 offset 开始, limit 数量的数据.
         mutable_cache_col->insertRangeFrom(*col, offset, limit);
     }
 

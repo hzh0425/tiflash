@@ -547,11 +547,13 @@ void DeltaMergeStore::write(const Context & db_context, const DB::Settings & db_
 
     size_t offset = 0;
     size_t limit;
+    // 获取主键列
     const auto handle_column = block.getByName(EXTRA_HANDLE_COLUMN_NAME).column;
     auto rowkey_column = RowKeyColumnContainer(handle_column, is_common_handle);
 
     while (offset != rows)
     {
+        //  根据 offset, 从主键列中获取 start_key.
         RowKeyValueRef start_key = rowkey_column.getRowKeyValue(offset);
         WriteBatches wbs(*storage_pool, db_context.getWriteLimiter());
         ColumnFilePtr write_column_file;
@@ -564,6 +566,7 @@ void DeltaMergeStore::write(const Context & db_context, const DB::Settings & db_
             {
                 std::shared_lock lock(read_write_mutex);
 
+                // 根据 key, 定位其在哪个 segment
                 auto segment_it = segments.upper_bound(start_key);
                 if (segment_it == segments.end())
                 {
@@ -580,6 +583,7 @@ void DeltaMergeStore::write(const Context & db_context, const DB::Settings & db_
 
             const auto & rowkey_range = segment->getRowKeyRange();
 
+            // 获取针对当前这个 segment, 可以写入哪些数据 [start, start + limit]
             auto [cur_offset, cur_limit] = rowkey_range.getPosRange(handle_column, offset, rows - offset);
             if (unlikely(cur_offset != offset))
                 throw Exception("cur_offset does not equal to offset", ErrorCodes::LOGICAL_ERROR);
@@ -590,29 +594,37 @@ void DeltaMergeStore::write(const Context & db_context, const DB::Settings & db_
             bool is_small = limit < dm_context->delta_cache_limit_rows / 4 && alloc_bytes < dm_context->delta_cache_limit_bytes / 4;
             // Small column fies are appended to Delta Cache, then flushed later.
             // While large column fies are directly written to PageStorage.
+            // 小数据量, 直接写入到 delta cache
             if (is_small)
             {
                 if (segment->writeToCache(*dm_context, block, offset, limit))
                 {
+                    // 放入 update_segments, 等待后台线程刷盘?
                     updated_segments.push_back(segment);
                     break;
                 }
             }
+            // 大数据量, 写入到 page storage
             else
             {
                 // If column file haven't been written, or the pk range has changed since last write, then write it and
                 // delete former written column file.
+                // 如果还没有创建 ColumnFile, 或者已经创建了, 但是 segment 不同.
                 if (!write_column_file || (write_column_file && write_range != rowkey_range))
                 {
                     wbs.rollbackWrittenLogAndData();
                     wbs.clear();
 
+                    // 这里用的是 TinyColumnFile, 将 block 里的数据写入到 wbs 中.
                     write_column_file = ColumnFileTiny::writeColumnFile(*dm_context, block, offset, limit, wbs);
+                    // 把数据写入到 pageStorage 中.
                     wbs.writeLogAndData();
                     write_range = rowkey_range;
                 }
 
                 // Write could fail, because other threads could already updated the instance. Like split/merge, merge delta.
+                // 这里的 writeToDisk, 应该指的是, 争对新建的 write_column_file, 将其 append 到 memTableSet ? 方便后续可以持久化元数据? (因为
+                // 大数据量已经通过 wbs.log 写入到 pageStorage 中了).
                 if (segment->writeToDisk(*dm_context, write_column_file))
                 {
                     updated_segments.push_back(segment);
@@ -627,6 +639,7 @@ void DeltaMergeStore::write(const Context & db_context, const DB::Settings & db_
     GET_METRIC(tiflash_storage_throughput_bytes, type_write).Increment(bytes);
     GET_METRIC(tiflash_storage_throughput_rows, type_write).Increment(rows);
 
+    // todo: 理清楚 flush 的流程, 和 wbs , pageStorage 的关系是什么?
     if (db_settings.dt_flush_after_write)
     {
         RowKeyRange merge_range = RowKeyRange::newNone(is_common_handle, rowkey_column_size);
@@ -665,6 +678,13 @@ void DeltaMergeStore::preIngestFile(const String & parent_path, const PageId fil
     delegator.addDTFile(file_id, file_size, parent_path);
 }
 
+// 作用: 
+/**
+  对于大块数据的同步。比如新 Region （每个大概 96MB）迁移到一个节点之后，会通过 "apply snapshot" 的方式来追数据。
+    如果我们还通过把数据解析成内存块，然后再写入到存储层。一方面写路径的开销、数据整理过程的写放大会比较大。另外是内存使用很容易不稳定。
+
+    这个时候是把大数据块 decode 成一个成型文件，然后再通过这个 API，直接注入到存储层里面。
+ */
 void DeltaMergeStore::ingestFiles(
     const DMContextPtr & dm_context,
     const RowKeyRange & range,
@@ -952,6 +972,7 @@ void DeltaMergeStore::flushCache(const DMContextPtr & dm_context, const RowKeyRa
     }
 }
 
+// 对每个 segment, 调用 segmentMergeDelta
 void DeltaMergeStore::mergeDeltaAll(const Context & context)
 {
     auto dm_context = newDMContext(context, context.getSettingsRef());
@@ -972,6 +993,7 @@ void DeltaMergeStore::mergeDeltaAll(const Context & context)
     }
 }
 
+// 对范围内的 segment 调用 compactDelta (compact delta layer)
 void DeltaMergeStore::compact(const Context & db_context, const RowKeyRange & range)
 {
     auto dm_context = newDMContext(db_context, db_context.getSettingsRef());
@@ -1178,6 +1200,7 @@ void DeltaMergeStore::waitForDeleteRange(const DB::DM::DMContextPtr &, const DB:
     // TODO: maybe we should wait, if there are too many delete ranges?
 }
 
+// 根据一些元数据, 判断是否需要对某个 segment 进行 flush / compact, merge, split 等操作.
 void DeltaMergeStore::checkSegmentUpdate(const DMContextPtr & dm_context, const SegmentPtr & segment, ThreadType thread_type)
 {
     if (segment->hasAbandoned())
@@ -1443,6 +1466,7 @@ bool DeltaMergeStore::updateGCSafePoint()
     return false;
 }
 
+// Handle task
 bool DeltaMergeStore::handleBackgroundTask(bool heavy)
 {
     auto task = background_tasks.nextTask(heavy, log);
@@ -1650,6 +1674,7 @@ UInt64 DeltaMergeStore::onSyncGc(Int64 limit)
         {
             // Check whether we should apply gc on this segment
             bool should_compact = false;
+            // 判断删除的数据是否超过了一定的比例数.
             if (GC::shouldCompactDeltaWithStable(
                     *dm_context,
                     segment_snap,
@@ -1950,6 +1975,7 @@ void DeltaMergeStore::segmentMerge(DMContext & dm_context, const SegmentPtr & le
         check(dm_context.db_context);
 }
 
+// 合并 delta 层和 stable 层.
 SegmentPtr DeltaMergeStore::segmentMergeDelta(
     DMContext & dm_context,
     const SegmentPtr & segment,
@@ -2024,6 +2050,7 @@ SegmentPtr DeltaMergeStore::segmentMergeDelta(
 
     WriteBatches wbs(*storage_pool, dm_context.getWriteLimiter());
 
+    // 构建一个新的 stable (可以理解为把 dleta 层和 stable 层合并, 构建 一个新的 stable 层)
     auto new_stable = segment->prepareMergeDelta(dm_context, schema_snap, segment_snap, wbs);
     wbs.writeLogAndData();
     new_stable->enableDMFilesGC();
@@ -2043,6 +2070,7 @@ SegmentPtr DeltaMergeStore::segmentMergeDelta(
 
         auto segment_lock = segment->mustGetUpdateLock();
 
+        // 根据新的 stable, 构建新的 segment.
         new_segment = segment->applyMergeDelta(dm_context, segment_snap, wbs, new_stable);
 
         wbs.writeMeta();

@@ -158,6 +158,7 @@ bool DeltaValueSpace::flush(DMContext & context)
             LOG_FMT_DEBUG(log, "{} Flush stop because abandoned", simpleInfo());
             return false;
         }
+        // FlushTask 就是把 memTable 里面的 memoryFile 的数据持久化到磁盘上, 包括 data 和 meta.
         flush_task = mem_table_set->buildFlushTask(context, persisted_file_set->getRows(), persisted_file_set->getDeletes(), persisted_file_set->getCurrentFlushVersion());
         cur_delta_index = delta_index;
     }
@@ -206,6 +207,7 @@ bool DeltaValueSpace::flush(DMContext & context)
     return true;
 }
 
+// Compact 指的是把几个小的 columnFile 合并成一个大的, 从而减少 io 的流程.
 bool DeltaValueSpace::compact(DMContext & context)
 {
     bool v = false;

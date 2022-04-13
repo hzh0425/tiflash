@@ -58,8 +58,11 @@ private:
     bool gc(const Settings & settings, const Seconds & try_gc_period = DELTA_MERGE_GC_PERIOD);
 
 private:
+    // todo: 这是干啥的?
     PageStoragePtr log_storage;
+    // 存储数据
     PageStoragePtr data_storage;
+    // 存储元数据
     PageStoragePtr meta_storage;
 
     std::atomic<Timepoint> last_try_gc_time = Clock::now();

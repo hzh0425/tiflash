@@ -64,6 +64,7 @@ Columns ColumnFileTiny::readFromDisk(const PageReader & page_reader, //
     for (size_t index = col_start; index < col_end; ++index)
     {
         const auto & cd = column_defines[index];
+        // 我猜 colid_to_offset 映射的是 colId 至 colId 在 dataPage 中的偏移量.
         if (auto it = colid_to_offset.find(cd.id); it != colid_to_offset.end())
         {
             auto col_index = it->second;
@@ -77,6 +78,7 @@ Columns ColumnFileTiny::readFromDisk(const PageReader & page_reader, //
     }
 
     auto page_map = page_reader.read({fields});
+    // TinyFile, 只有一个 data page ?
     Page page = page_map[data_page_id];
     for (size_t index = col_start; index < col_end; ++index)
     {
@@ -191,6 +193,7 @@ Block ColumnFileTiny::readBlockForMinorCompaction(const PageReader & page_reader
     }
 }
 
+// 写入 block 到 file 的尾部, 如果 schema 为空, 则创建一个新的 file.
 ColumnTinyFilePtr ColumnFileTiny::writeColumnFile(DMContext & context, const Block & block, size_t offset, size_t limit, WriteBatches & wbs, const BlockPtr & schema, const CachePtr & cache)
 {
     auto page_id = writeColumnFileData(context, block, offset, limit, wbs);
@@ -201,19 +204,24 @@ ColumnTinyFilePtr ColumnFileTiny::writeColumnFile(DMContext & context, const Blo
 
 PageId ColumnFileTiny::writeColumnFileData(DMContext & context, const Block & block, size_t offset, size_t limit, WriteBatches & wbs)
 {
+    // 构建新的 log page id
     auto page_id = context.storage_pool.newLogPageId();
 
     MemoryWriteBuffer write_buf;
+    // 存储每个 col 的 data size
     PageFieldSizes col_data_sizes;
     for (const auto & col : block)
     {
         auto last_buf_size = write_buf.count();
+        // 序列化该 column 从 offset 至 offset + limit.
         serializeColumn(write_buf, *col.column, col.type, offset, limit, context.db_context.getSettingsRef().dt_compression_method, context.db_context.getSettingsRef().dt_compression_level);
         col_data_sizes.push_back(write_buf.count() - last_buf_size);
     }
 
     auto data_size = write_buf.count();
     auto buf = write_buf.tryGetReadBuffer();
+
+    // 为什么写入到 wbs 的 log 里面? 而不是 data ?
     wbs.log.putPage(page_id, 0, buf, data_size, col_data_sizes);
 
     return page_id;

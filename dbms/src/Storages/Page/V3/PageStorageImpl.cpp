@@ -90,7 +90,9 @@ void PageStorageImpl::writeImpl(DB::WriteBatch && write_batch, const WriteLimite
         return;
 
     // Persist Page data to BlobStore
+    // 先写入到 blob store
     auto edit = blob_store.write(write_batch, write_limiter);
+    // 再修改 Mvcc (PageDirectory)
     page_directory->apply(std::move(edit), write_limiter);
 }
 
@@ -130,7 +132,6 @@ DB::Page PageStorageImpl::readImpl(NamespaceId ns_id, PageId page_id, const Read
     {
         snapshot = this->getSnapshot("");
     }
-
     auto page_entry = page_directory->get(buildV3Id(ns_id, page_id), snapshot);
     return blob_store.read(page_entry, read_limiter);
 }
@@ -142,6 +143,7 @@ PageMap PageStorageImpl::readImpl(NamespaceId ns_id, const std::vector<PageId> &
         snapshot = this->getSnapshot("");
     }
 
+    // // 根据 snapshot version, 获取要读的 pageEntries
     PageIdV3Internals page_id_v3s;
     for (auto p_id : page_ids)
         page_id_v3s.emplace_back(buildV3Id(ns_id, p_id));

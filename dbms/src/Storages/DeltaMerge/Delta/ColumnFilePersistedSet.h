@@ -55,6 +55,8 @@ public:
 
 private:
     PageId metadata_id;
+
+    // 所谓 level, 一共只有两层, 第一层是 deltaLayer, 第二层是 stableLayer.
     ColumnFilePersistedLevels persisted_files_levels;
     // TODO: check the proper memory_order when use this atomic variable
     std::atomic<size_t> persisted_files_count;

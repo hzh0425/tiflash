@@ -392,6 +392,9 @@ private:
 private:
     std::atomic<UInt64> sequence;
     mutable std::shared_mutex table_rw_mutex;
+
+    // 这个 MVCCMapType 就是一个普通的 map, 但是 value 里还有一个 map, 存的是 <version, entry>
+    // 所以可以理解为: map<pageId, map<version, entries>>;
     MVCCMapType mvcc_table_directory;
 
     mutable std::mutex snapshots_mutex;

@@ -49,6 +49,8 @@ using SegmentIdSet = std::unordered_set<UInt64>;
 
 inline static const PageId DELTA_MERGE_FIRST_SEGMENT_ID = 1;
 
+// Dleta tree 由多个 segment 组成, 每个 segment 分为 (memory + delta layer + stable layer)
+// 每个 Layer 的最小存储单位是 pack.
 struct SegmentStat
 {
     UInt64 segment_id;
