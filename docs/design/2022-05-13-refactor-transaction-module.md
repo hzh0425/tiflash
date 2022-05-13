@@ -1,9 +1,7 @@
 # Code structure of TiDB and Raft Module
 
 - Author(s): hzh0425
-
 - Last updated: May. 13, 2022
-
 - Discussion at: [Breakdown the "dbms/src/Storages/Transaction" module · Issue #4646 · pingcap/tiflash (github.com)](https://github.com/pingcap/tiflash/issues/4646)
 
 # 一 Motivation
